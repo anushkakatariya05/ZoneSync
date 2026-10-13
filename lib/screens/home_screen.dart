@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'manage_zones_screen.dart';
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -253,9 +253,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 55,
                 child: ElevatedButton.icon(
                   onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Zone management coming soon'),
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ManageZonesScreen(),
                       ),
                     );
                   },
