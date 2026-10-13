@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'manage_zones_screen.dart';
 class HomeScreen extends StatefulWidget {
@@ -9,6 +10,28 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool isSilentModeEnabled = false;
+  
+Future<void> openDndSettings() async {
+  try {
+    await const MethodChannel('zonesync/dnd')
+        .invokeMethod('requestDndAccess');
+  } on PlatformException catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Could not open DND settings: ${e.message}'),
+      ),
+    );
+  } on MissingPluginException {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Please rebuild the app and try again.'),
+      ),
+    );
+  }
+}
+
 
   static const Color backgroundColor = Color(0xFF07111F);
   static const Color cardColor = Color(0xFF111E30);
@@ -278,9 +301,34 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
+           const SizedBox(height: 12),   
+SizedBox(
+  width: double.infinity,
+  height: 55,
+  child: OutlinedButton.icon(
+    onPressed: openDndSettings,
+    style: OutlinedButton.styleFrom(
+      foregroundColor: blue,
+      side: const BorderSide(color: blue),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15),
+      ),
+    ),
+    icon: const Icon(Icons.do_not_disturb_on_outlined),
+    label: const Text(
+      'Grant DND Access',
+      style: TextStyle(
+        fontSize: 16,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+  ),
+),
+
+const SizedBox(height: 20),
 
               const SizedBox(height: 25),
-
+              
               // Footer
               const Center(
                 child: Text(

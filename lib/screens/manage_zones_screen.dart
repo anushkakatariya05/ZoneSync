@@ -1,5 +1,5 @@
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -127,6 +127,43 @@ class _ManageZonesScreenState extends State<ManageZonesScreen> {
       }
     }
   }
+  Future<void> checkZoneStatus() async {
+  if (zones.isEmpty) {
+    showMessage('Please save a Silent Zone first.');
+    return;
+  }
+
+  try {
+    final position = await Geolocator.getCurrentPosition();
+
+    if (!mounted) return;
+
+    String result = '';
+
+    for (final zone in zones) {
+      final distance = Geolocator.distanceBetween(
+        position.latitude,
+        position.longitude,
+        (zone['latitude'] as num).toDouble(),
+        (zone['longitude'] as num).toDouble(),
+      );
+
+      final radius = (zone['radius'] as num).toDouble();
+      final isInside = distance <= radius;
+
+      result +=
+          '${zone['name']}: ${isInside ? 'INSIDE ZONE' : 'OUTSIDE ZONE'}'
+          '\nDistance: ${distance.toStringAsFixed(1)} m'
+          '\n\n';
+    }
+
+    showMessage(result.trim());
+  } catch (error) {
+    if (!mounted) return;
+    showMessage('Could not check location: $error');
+  }
+}
+
 
   Future<void> addZone() async {
     final name = zoneController.text.trim();
@@ -354,6 +391,62 @@ Widget build(BuildContext context) {
                     ),
                   ),
                 ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: checkZoneStatus,
+                    icon: const Icon(Icons.radar),
+                    label: const Text('Check Zone Status'),
+                  ),
+                ),
+                
+const SizedBox(height: 10),
+
+SizedBox(
+  width: double.infinity,
+  height: 50,
+  child: ElevatedButton.icon(
+    onPressed: () async {
+      if (zones.isEmpty) {
+        showMessage('Please save a Silent Zone first.');
+        return;
+      }
+
+      final service = FlutterBackgroundService();
+      final running = await service.isRunning();
+
+      if (!running) {
+        await service.startService();
+      }
+
+      if (mounted) {
+        showMessage('Background monitoring requested.');
+      }
+    },
+    icon: const Icon(Icons.play_arrow),
+    label: const Text('Start Background Monitoring'),
+  ),
+),
+
+const SizedBox(height: 10),
+
+SizedBox(
+  width: double.infinity,
+  height: 50,
+  child: OutlinedButton.icon(
+    onPressed: () async {
+      FlutterBackgroundService().invoke('stopService');
+
+      if (mounted) {
+        showMessage('Stop monitoring requested.');
+      }
+    },
+    icon: const Icon(Icons.stop),
+    label: const Text('Stop Monitoring'),
+  ),
+),
 
                 const SizedBox(height: 24),
 
