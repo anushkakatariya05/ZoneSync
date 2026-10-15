@@ -1,4 +1,3 @@
-
 package com.example.zonesync
 
 import android.content.Intent
@@ -14,6 +13,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        flutterEngine.plugins.add(DndPlugin())
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,

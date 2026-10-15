@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 
 class ManageZonesScreen extends StatefulWidget {
   const ManageZonesScreen({super.key});
@@ -127,18 +128,64 @@ class _ManageZonesScreenState extends State<ManageZonesScreen> {
       }
     }
   }
-  Future<void> checkZoneStatus() async {
+  
+static const MethodChannel _backgroundDnd =
+    MethodChannel('zonesync/dnd_background');
+
+Future<bool> updateDndForCurrentLocation(Position position) async {
+  if (zones.isEmpty) return false;
+
+  bool anyInside = false;
+
+  for (final zone in zones) {
+    final distance = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      (zone['latitude'] as num).toDouble(),
+      (zone['longitude'] as num).toDouble(),
+    );
+
+    final radius = (zone['radius'] as num).toDouble();
+
+    if (distance <= radius) {
+      anyInside = true;
+      break;
+    }
+  }
+
+  final result = await _backgroundDnd.invokeMethod<bool>(
+    anyInside ? 'setDndOn' : 'setDndOff',
+  );
+
+  if (result != true) {
+    showMessage(
+      'Could not update DND. Check DND access and native plugin registration.',
+    );
+    return false;
+  }
+
+  return anyInside;
+}
+
+  
+Future<void> checkZoneStatus() async {
   if (zones.isEmpty) {
     showMessage('Please save a Silent Zone first.');
     return;
   }
 
   try {
-    final position = await Geolocator.getCurrentPosition();
+    final position = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 20),
+      ),
+    );
 
     if (!mounted) return;
 
-    String result = '';
+    bool anyInside = false;
+    final messages = <String>[];
 
     for (final zone in zones) {
       final distance = Geolocator.distanceBetween(
@@ -148,21 +195,41 @@ class _ManageZonesScreenState extends State<ManageZonesScreen> {
         (zone['longitude'] as num).toDouble(),
       );
 
-      final radius = (zone['radius'] as num).toDouble();
-      final isInside = distance <= radius;
+      final inside = distance <= (zone['radius'] as num).toDouble();
+      if (inside) anyInside = true;
 
-      result +=
-          '${zone['name']}: ${isInside ? 'INSIDE ZONE' : 'OUTSIDE ZONE'}'
-          '\nDistance: ${distance.toStringAsFixed(1)} m'
-          '\n\n';
+      messages.add(
+        "${zone['name']}: ${inside ? 'INSIDE ZONE' : 'OUTSIDE ZONE'}"
+        '\nDistance: ${distance.toStringAsFixed(1)} m',
+      );
     }
 
-    showMessage(result.trim());
+    final result = await _backgroundDnd.invokeMethod<bool>(
+      anyInside ? 'setDndOn' : 'setDndOff',
+    );
+
+    if (!mounted) return;
+
+    showMessage(
+      '${messages.join('\n\n')}\n\n'
+      '${result == true
+          ? (anyInside ? 'DND enabled.' : 'Previous DND mode restored.')
+          : 'DND update failed. Check native plugin registration and access.'}',
+    );
+  } on PlatformException catch (error) {
+    if (!mounted) return;
+    showMessage('DND error: ${error.message ?? error.code}');
+  } on MissingPluginException {
+    if (!mounted) return;
+    showMessage(
+      'Background DND plugin is not registered. Check Android plugin setup.',
+    );
   } catch (error) {
     if (!mounted) return;
     showMessage('Could not check location: $error');
   }
 }
+
 
 
   Future<void> addZone() async {
@@ -218,7 +285,23 @@ class _ManageZonesScreenState extends State<ManageZonesScreen> {
     if (!mounted) return;
 
     FocusScope.of(context).unfocus();
-    showMessage('$name saved with its location and radius.');
+showMessage('$name saved. Checking your current zone status...');
+
+try {
+  final position = await Geolocator.getCurrentPosition(
+    locationSettings: const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      timeLimit: Duration(seconds: 20),
+    ),
+  );
+
+  if (!mounted) return;
+  await updateDndForCurrentLocation(position);
+} catch (error) {
+  if (mounted) {
+    showMessage('Zone saved, but DND could not be updated: $error');
+  }
+}
   }
 
   Future<void> deleteZone(int index) async {

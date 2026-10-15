@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'manage_zones_screen.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:geolocator/geolocator.dart';
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -28,6 +30,77 @@ Future<void> openDndSettings() async {
       const SnackBar(
         content: Text('Please rebuild the app and try again.'),
       ),
+    );
+  }
+}
+
+Future<void> toggleSilentMode(bool value) async {
+  try {
+    if (value) {
+      final locationEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!locationEnabled) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enable Location on your phone.')),
+        );
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location permission is required.')),
+        );
+        return;
+      }
+
+      // Start the configured background monitoring service.
+      await FlutterBackgroundService().startService();
+
+      if (!mounted) return;
+      setState(() => isSilentModeEnabled = true);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Silent Mode enabled. Zone monitoring started.'),
+        ),
+      );
+    } else {
+      // Stop monitoring. Native code should restore DND before this
+      // service is stopped if ZoneSync previously enabled it.
+      try {
+        await const MethodChannel('zonesync/dnd_background')
+            .invokeMethod<bool>('setDndOff');
+      } on PlatformException catch (e) {
+        debugPrint('Could not restore DND: ${e.message}');
+      } on MissingPluginException {
+        debugPrint('Background DND plugin is not registered.');
+      }
+
+      FlutterBackgroundService().invoke('stopService');
+
+      if (!mounted) return;
+      setState(() => isSilentModeEnabled = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Silent Mode disabled.')),
+      );
+    }
+  } on PlatformException catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not change Silent Mode: ${e.message}')),
+    );
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not start monitoring: $e')),
     );
   }
 }
@@ -258,11 +331,7 @@ Future<void> openDndSettings() async {
                     Switch(
                       value: isSilentModeEnabled,
                       activeThumbColor: blue,
-                      onChanged: (value) {
-                        setState(() {
-                          isSilentModeEnabled = value;
-                        });
-                      },
+                      onChanged: toggleSilentMode,
                     ),
                   ],
                 ),

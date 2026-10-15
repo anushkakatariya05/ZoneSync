@@ -16,7 +16,8 @@ const String notificationChannelId = 'zonesync_background';
 const int notificationId = 888;
 
 const MethodChannel dndChannel = MethodChannel('zonesync/dnd');
-
+const MethodChannel backgroundDndChannel =
+    MethodChannel('zonesync/dnd_background');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -77,7 +78,6 @@ class ZoneSyncApp extends StatelessWidget {
   }
 }
 
-
 @pragma('vm:entry-point')
 void zoneSyncServiceStart(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
@@ -98,75 +98,127 @@ void zoneSyncServiceStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
-  timer = Timer.periodic(const Duration(seconds: 15), (timer) async {
-    if (isChecking) return;
-    isChecking = true;
+  timer = Timer.periodic(
+    const Duration(seconds: 15),
+    (timer) async {
+      if (isChecking) return;
+      isChecking = true;
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
+      try {
+        // 1. Load preferences only once per check.
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.reload();
 
-      final savedZones =
-          prefs.getStringList('zonesync_saved_zones_v2');
+        final monitoringEnabled =
+            prefs.getBool('zonesync_silent_mode_enabled') ?? true;
 
-      if (savedZones == null || savedZones.isEmpty) return;
+        final savedZones =
+            prefs.getStringList('zonesync_saved_zones_v2');
 
-      final zones = savedZones
-          .map((item) =>
-              Map<String, dynamic>.from(jsonDecode(item) as Map))
-          .toList();
+        // 2. If monitoring is disabled or there are no saved zones,
+        // restore the previous DND mode and skip this check.
+        if (!monitoringEnabled ||
+            savedZones == null ||
+            savedZones.isEmpty) {
+          final result =
+              await backgroundDndChannel.invokeMethod<bool>(
+            'setDndOff',
+          );
 
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      );
-
-      for (final zone in zones) {
-        final name = zone['name'] as String? ?? 'Silent Zone';
-        final latitude = (zone['latitude'] as num).toDouble();
-        final longitude = (zone['longitude'] as num).toDouble();
-        final radius = (zone['radius'] as num).toDouble();
-
-        final distance = Geolocator.distanceBetween(
-          position.latitude,
-          position.longitude,
-          latitude,
-          longitude,
-        );
-
-        final inside = distance <= radius;
-
-        // Use a consistent key for each saved zone.
-        final stateKey =
-            'zonesync_bg_state_${Uri.encodeComponent(name)}';
-        final wasInside = prefs.getBool(stateKey);
-
-        if (wasInside == null || wasInside != inside) {
-          await prefs.setBool(stateKey, inside);
-
-          service.invoke('zoneStatusChanged', {
-            'name': name,
-            'inside': inside,
-            'distance': distance,
-          });
-
-          if (service is AndroidServiceInstance) {
-            service.setForegroundNotificationInfo(
-              title: inside ? 'Entered: $name' : 'Exited: $name',
-              content: inside
-                  ? 'You are inside this zone'
-                  : 'You are outside this zone',
+          if (result != true) {
+            debugPrint(
+              'ZoneSync could not restore DND. '
+              'Check notification-policy access and plugin registration.',
             );
           }
+
+          return;
         }
+
+        // 3. Convert saved zone JSON into maps.
+        final zones = savedZones
+            .map(
+              (item) => Map<String, dynamic>.from(
+                jsonDecode(item) as Map,
+              ),
+            )
+            .toList();
+
+        // 4. Get the current GPS position.
+        final position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 20),
+          ),
+        );
+
+        // 5. Check whether the user is inside any saved zone.
+        bool anyInside = false;
+
+        for (final zone in zones) {
+          final name = zone['name'] as String? ?? 'Silent Zone';
+          final latitude = (zone['latitude'] as num).toDouble();
+          final longitude = (zone['longitude'] as num).toDouble();
+          final radius = (zone['radius'] as num).toDouble();
+
+          final distance = Geolocator.distanceBetween(
+            position.latitude,
+            position.longitude,
+            latitude,
+            longitude,
+          );
+
+          final inside = distance <= radius;
+
+          if (inside) {
+            anyInside = true;
+          }
+
+          // Notify the app when a zone's status changes.
+          final stateKey =
+              'zonesync_bg_state_${Uri.encodeComponent(name)}';
+
+          final wasInside = prefs.getBool(stateKey);
+
+          if (wasInside == null || wasInside != inside) {
+            await prefs.setBool(stateKey, inside);
+
+            service.invoke('zoneStatusChanged', {
+              'name': name,
+              'inside': inside,
+              'distance': distance,
+            });
+
+            if (service is AndroidServiceInstance) {
+              service.setForegroundNotificationInfo(
+                title: inside ? 'Entered: $name' : 'Exited: $name',
+                content: inside
+                    ? 'You are inside this zone'
+                    : 'You are outside this zone',
+              );
+            }
+          }
+        }
+
+        // 6. Update DND only AFTER checking every zone.
+        final dndResult =
+            await backgroundDndChannel.invokeMethod<bool>(
+          anyInside ? 'setDndOn' : 'setDndOff',
+        );
+
+        if (dndResult != true) {
+          debugPrint(
+            'ZoneSync could not update DND. '
+            'Check Android notification-policy access and '
+            'background plugin registration.',
+          );
+        }
+      } catch (e, stackTrace) {
+        debugPrint('ZoneSync background monitoring error: $e');
+        debugPrint('$stackTrace');
+      } finally {
+        isChecking = false;
       }
-    } catch (e, stackTrace) {
-      // Log errors so we can diagnose permission or location failures.
-      print('ZoneSync background monitoring error: $e');
-      print(stackTrace);
-    } finally {
-      isChecking = false;
-    }
-  });
+    },
+  );
 }

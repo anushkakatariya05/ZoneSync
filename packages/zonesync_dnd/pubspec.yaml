@@ -1,0 +1,18 @@
+name: zonesync_dnd
+description: Native Android DND support for ZoneSync.
+version: 1.0.0
+
+environment:
+  sdk: ^3.13.4
+  flutter: ">=3.3.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.example.zonesync_dnd
+        pluginClass: ZoneSyncDndPlugin
